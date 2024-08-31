@@ -1,5 +1,6 @@
 --------------------------------------------------------------------------------
--- 2023 - avb
+-- 2024 - avb
+-- v0.2
 --------------------------------------------------------------------------------
 
 --------------------------------------------------------------------------------
@@ -14,27 +15,37 @@ RTI.UPDATE_INTERVAL = 0.025
 RTI.log_file = nil
 RTI.socket = nil
 RTI.data_str = ""
+RTI.connect_try = 0
+
+RTI.vehicle_name = ""
+
+local vehicles = {
+   ["Su-25T"] = "su_25t",
+}
 
 --------------------------------------------------------------------------------
 -- Util
 --------------------------------------------------------------------------------
+package.path  = package.path..";"..lfs.currentdir().."/LuaSocket/?.lua"
+package.cpath = package.cpath..";"..lfs.currentdir().."/LuaSocket/?.dll"
+
+--------------------------------------------------------------------------------
 function connectTCPSocket()
-   RTI.socket = socket_lib.connect("127.0.0.1", RTI.SOCKET_PORT)
+   if socket_lib == nil then return end
 
-   if RTI.socket ~= nil then
-      RTI.socket:settimeout(1)
-      RTI.socket:setoption("tcp-nodelay", true)
+   local socket = socket_lib.tcp()
+   socket:settimeout(0.1)
+   socket:setoption("tcp-nodelay", true)
 
+   local ret = socket:connect("127.0.0.1", RTI.SOCKET_PORT)
+   if ret ~= nil then
       writeToLog("INFO: Connected to the port: " .. RTI.SOCKET_PORT)
 
-      s_no_conection = false
+      RTI.socket = socket
 
       return true
    else
-      if not s_no_conection then
-         writeToLog("ERROR: No Connection with WTRTI")
-         s_no_conection = true
-      end
+      writeToLog("ERROR: No Connection with WTRTI")
 
       return false
    end
@@ -42,9 +53,9 @@ end
 
 --------------------------------------------------------------------------------
 function sendData(data)
-   local ret = RTI.socket:send(data)
+   local ret, err, num = RTI.socket:send(data)
    if ret == nil then
-      writeToLog("ERROR: Can't send data to WTRTI")
+      writeToLog("ERROR: " .. err)
 
       RTI.socket:close()
       RTI.socket = nil
@@ -89,14 +100,26 @@ function LuaExportStart()
                                version.ProductVersion[4])) -- build number   (Continuously growth)
    end
 
-   ---
-   package.path  = package.path .. ";" .. lfs.currentdir() .. "/LuaSocket/?.lua"
-   package.cpath = package.cpath .. ";" .. lfs.currentdir() .. "/LuaSocket/?.dll"
-
    socket_lib = require("socket")
-   if socket_lib == nil then
-      writeToLog("ERROR: LuaSocket not loaded")
+   if socket_lib then
+      connectTCPSocket()
+   else
+      writeToLog("ERROR: LuaSocket is not loaded")
    end
+
+   ---
+   local mdata = LoGetSelfData()
+   if mdata then
+      local veh = vehicles[mdata.Name]
+      if veh then
+         RTI.vehicle_name = veh
+      else
+         RTI.vehicle_name = mdata.Name
+      end
+   else
+      RTI.vehicle_name = "TestPlane"
+   end
+
 end
 
 --------------------------------------------------------------------------------
@@ -117,33 +140,31 @@ function LuaExportStop()
 end
 
 --------------------------------------------------------------------------------
-function LuaExportBeforeNextFrame()
-
-end
+-- function LuaExportBeforeNextFrame()
+--
+-- end
 
 --------------------------------------------------------------------------------
-function LuaExportAfterNextFrame()
-
-end
+-- function LuaExportAfterNextFrame()
+--
+-- end
 
 --------------------------------------------------------------------------------
 function LuaExportActivityNextEvent(t)
-   if (RTI.socket == nil) and (not connectTCPSocket()) then
+   if RTI.socket == nil then
       return (t + RTI.REPEAT_CONNECTION_INTERVAL)
    end
 
    RTI.data_str = "{ "
+   RTI.data_str = RTI.data_str .. "\"type\" : \"" .. RTI.vehicle_name .. "\", "
 
+   -- local panel = LoGetControlPanel_HSI()
+   -- if panel then
+   --    addParam("compass", "%.3f", panel.Heading_raw * TO_DEG)
+   -- end
    local mdata = LoGetSelfData()
    if mdata then
-      RTI.data_str = RTI.data_str .. "\"type\" : \"" .. mdata.Name .. "\", "
-   else
-      RTI.data_str = RTI.data_str .. "\"type\" : \"TestPlane\", "
-   end
-
-   local panel = LoGetControlPanel_HSI()
-   if panel then
-      addParam("compass", "%.3f", panel.Course * TO_DEG)
+      addParam("compass", "%.3f", mdata.Heading * TO_DEG)
    end
 
    local ALT = LoGetAltitudeAboveSeaLevel()
@@ -153,16 +174,22 @@ function LuaExportActivityNextEvent(t)
    addParam("radio_altitude, m", "%.3f", RALT)
 
    local TAS = LoGetTrueAirSpeed()
-   addParam("TAS, km/h", "%.3f", TAS * 3.6)
+   if TAS then
+      addParam("TAS, km/h", "%.3f", TAS * 3.6)
+   end
 
    local IAS = LoGetIndicatedAirSpeed()
-   addParam("IAS, km/h", "%.3f", IAS * 3.6)
+   if IAS then
+      addParam("IAS, km/h", "%.3f", IAS * 3.6)
+   end
 
    local Mach = LoGetMachNumber()
    addParam("M", "%.3f", Mach)
 
-   local Ny = LoGetAccelerationUnits()["y"]
-   addParam("Ny", "%.3f", Ny)
+   local Acc = LoGetAccelerationUnits()
+   if Acc then
+      addParam("Ny", "%.3f", Acc["y"])
+   end
 
    local Vy = LoGetVerticalVelocity()
    addParam("Vy, m/s", "%.3f", Vy)
@@ -170,45 +197,84 @@ function LuaExportActivityNextEvent(t)
    local AoA = LoGetAngleOfAttack()
    addParam("AoA, deg", "%.3f", AoA)
 
-   local AoS = LoGetSlipBallPosition()
-   addParam("AoS, deg", "%.3f", AoS)
+   local slip = LoGetSlipBallPosition()
+   addParam("slip", "%.3f", slip)
+
+   local mYaw = LoGetMagneticYaw()
+   addParam("magnetic_yaw", "%.3f", mYaw)
 
    --
    local pitch, bank, yaw = LoGetADIPitchBankYaw()
-   addParam("aviahorizon_roll", "%.3f", bank * TO_DEG)
-   addParam("aviahorizon_pitch", "%.3f", pitch * TO_DEG)
+   if bank then
+      addParam("aviahorizon_roll", "%.3f", -bank * TO_DEG)
+   end
+   if pitch then
+      addParam("aviahorizon_pitch", "%.3f", -pitch * TO_DEG)
+   end
 
    ---
    local engine = LoGetEngineInfo()
    if engine then
-      --
-      addParam("RPM throttle 1, %", "%.2f", engine.RPM.left)
-      if engine.RPM.right then
-         addParam("RPM throttle 2, %", "%.2f", engine.RPM.right)
+      ---
+      if engine.RPM then
+         addParam("RPM throttle 1, %", "%.2f", engine.RPM.left)
+         if engine.RPM.right then
+            addParam("RPM throttle 2, %", "%.2f", engine.RPM.right)
+         end
       end
 
+      --- fuel
       local fuel = engine["fuel_internal"]
-      fuel = fuel + engine["fuel_external"]
-      addParam("fuel", "%.5f", fuel)
+      if fuel then
+         ---
+         local fuel_ext = engine["fuel_external"]
+         if fuel_ext then
+            fuel = fuel + fuel_ext
+         end
 
-      --
+         addParam("fuel", "%.5f", fuel)
+         addParam("Mfuel, kg", "%.5f", fuel)
+      end
+
+      -- fuel consumption
       local fuel_consume = 0
       for key,value in pairs(engine.FuelConsumption) do
          fuel_consume = fuel_consume + value
       end
       fuel_consume = 60 * fuel_consume -- kg/sec -> kg/min
       addParam("fuel_consume", "%.3f", fuel_consume)
+
+      -- temperature
+      if engine.Temperature then
+         addParam("head_temperature", "%.2f", engine.Temperature.left)
+         if engine.Temperature.right then
+            addParam("head_temperature1", "%.2f", engine.Temperature.right)
+         end
+      end
    end
 
    ----
    local mech = LoGetMechInfo()
    if mech then
       --
-      addParam("gear, %", "%.2f", 100 * mech.gear.value)
+      if mech.gear then
+         addParam("gear, %", "%.2f", 100 * mech.gear.value)
+      end
+
       --
-      addParam("flaps, %", "%.2f", 100 * mech.flaps.value)
+      if mech.flaps then
+         addParam("flaps, %", "%.2f", 100 * mech.flaps.value)
+      end
+
       --
-      addParam("airbrake, %", "%.2f", 100 * mech.speedbrakes.value)
+      if mech.speedbrakes then
+         addParam("airbrake, %", "%.2f", 100 * mech.speedbrakes.value)
+      end
+
+      ---
+      if mech.airintake then
+         addParam("radiator 1, %", "%.2f", 100 * mech.airintake.value)
+      end
    end
 
    ---

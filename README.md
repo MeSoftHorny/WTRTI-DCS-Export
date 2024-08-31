@@ -2,7 +2,10 @@
 DCS World Export Script to WTRTI
 
 ## Installation
-1. Copy-Paste the __Scripts\Export.lua__ into %USERPROFILE%\Saved Games\DCS\Scripts\ folder.  
-   For __DCS Open Beta__ use this directory: %USERPROFILE%\Saved Games\DCS.openbeta\Scripts\
-2. Start WTRTI, open Settings -> Advanced tab -> Enable "TCP Listener".
-3. Start the game.
+1. Download ZIP (Code -> Download ZIP).
+2. Copy the __Scripts__ folder into `%USERPROFILE%\Saved Games\DCS\`  
+   For __DCS Open Beta__: `%USERPROFILE%\Saved Games\DCS.openbeta\`
+3. Open __Scripts__ folder and rename `Export.lua.inc` -> `Export.lua`  
+   _If you already have `Export.lua`, copy the internals of `Export.lua.inc` into `Export.lua`._
+4. Start WTRTI, open Settings -> General tab -> Network -> Enable "TCP Listener".
+5. Start the game.
